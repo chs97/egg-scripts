@@ -14,6 +14,7 @@ if (cluster.isMaster) {
   ipc.config.retry = 1000
   ipc.config.silent = true
   ipc.serve(() => ipc.server.on(helper.constants.RELOAD_MESSAGE), async () => {
+    console.log('server start and listen ' + helper.constants.RELOAD_MESSAGE)
     const oldWorkers = cluster.workers
     const newWorkers = []
     let hasConnects = 0
