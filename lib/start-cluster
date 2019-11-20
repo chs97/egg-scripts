@@ -1,52 +1,86 @@
 #!/usr/bin/env node
 
-'use strict';
+"use strict"
 
-const cluster = require('cluster')
-const ipc = require('node-ipc')
-const helper = require('./helper')
-const options = JSON.parse(process.argv[2]);
+const cluster = require("cluster")
+const ipc = require("node-ipc")
+const helper = require("./helper")
+const options = JSON.parse(process.argv[2])
+async function killWorkers(workers) {
+  await Promise.all(
+    workers.map(async worker => {
+      if (worker.isDead()) {
+        return
+      }
+      worker.disableRefork = true
+      worker.disconnect()
+      await helper.delay(5000)
+      if (worker.isDead()) {
+        return
+      }
+      worker.kill()
+    })
+  )
+}
 
 if (cluster.isMaster) {
   const { title } = options
-  ipc.config.id = 'egg-master-ipc-process-' + title
+  ipc.config.id = "egg-master-ipc-process-" + title
   ipc.config.retry = 1000
   ipc.config.silent = true
-  console.log(ipc.config.id)
-  ipc.serve(() => ipc.server.on(helper.constants.RELOAD_MESSAGE, async () => {
-    console.log('server start and listen ' + helper.constants.RELOAD_MESSAGE)
-    const oldWorkers = cluster.workers
-    const newWorkers = []
+  ipc.serve(() => {
+    let oldWorkers = []
+    let newWorkers = []
     let hasConnects = 0
     let forkCount = 0
-    cluster.on('fork', (worker) => {
-      forkCount ++
+    let socket = null
+    cluster.on("fork", worker => {
+      forkCount++
       newWorkers.push(worker)
-      console.log('fork new worker: %s', worker.process.pid)
     })
-    cluster.on('exit', (worker) => {
+    cluster.on("exit", worker => {
       if (newWorkers.includes(worker)) {
-        console.log('exit worker')
+        emitMessage(helper.messageType.WORKER_BROKEN, {
+          pid: worker.process.pid
+        })
+        killWorkers(newWorkers)
+      }
+
+      const notDeadWorker = newWorkers.find(w => !w.isDead())
+      if (!notDeadWorker) {
+        emitMessage(helper.messageType.RELOAD_FAIL)
       }
     })
-    cluster.on('listening', (worker) => {
+    cluster.on("listening", async worker => {
       if (newWorkers.includes(worker)) {
         hasConnects++
       }
       if (hasConnects === newWorkers.length) {
-        killOldWorkers()
+        // new worker has ready
+        await killWorkers(oldWorkers)
+        emitMessage(helper.messageType.RELOAD_SUCCESS)
       }
     })
-    for(const id in oldWorkers) {
-      const worker = oldWorkers[id]
-      // cfork special prop: _clusterSettings
-      const newWorker = cluster.fork(worker._clusterSettings)
-      newWorker._clusterSettings = worker._clusterSettings
+
+    function emitMessage(type, data) {
+      ipc.server.emit(socket, "message", { type, data })
     }
-    async function killOldWorkers() {
-      console.log('disconnect all')
-    }
-  }))
+    ipc.server.on(helper.constants.RELOAD_MESSAGE, async (data, _socket) => {
+      // reset vars
+      oldWorkers = Object.entries(cluster.workers).map(([_, worker]) => worker)
+      newWorkers = []
+      hasConnects = 0
+      forkCount = 0
+      socket = _socket
+      
+      for (const worker of oldWorkers) {
+        // const worker = oldWorkers[id]
+        // cfork special prop: _clusterSettings
+        const newWorker = cluster.fork(worker._clusterSettings)
+        newWorker._clusterSettings = worker._clusterSettings
+      }
+    })
+  })
   ipc.server.start()
 }
-require(options.framework).startCluster(options);
+require(options.framework).startCluster(options)
