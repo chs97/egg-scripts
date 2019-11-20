@@ -37,6 +37,7 @@ if (cluster.isMaster) {
     cluster.on("fork", worker => {
       forkCount++
       newWorkers.push(worker)
+      emitMessage(helper.messageType.WORKER_FORK, { pid: worker.process.pid, id: worker.id })
     })
     cluster.on("exit", worker => {
       if (newWorkers.includes(worker)) {
@@ -44,6 +45,10 @@ if (cluster.isMaster) {
           pid: worker.process.pid
         })
         killWorkers(newWorkers)
+      }
+
+      if (newWorkers.length === 0) {
+        return
       }
 
       const notDeadWorker = newWorkers.find(w => !w.isDead())
@@ -54,15 +59,19 @@ if (cluster.isMaster) {
     cluster.on("listening", async worker => {
       if (newWorkers.includes(worker)) {
         hasConnects++
+        emitMessage(helper.messageType.WORKER_LISTENED, { pid: worker.process.pid })
       }
       if (hasConnects === newWorkers.length) {
         // new worker has ready
         await killWorkers(oldWorkers)
-        emitMessage(helper.messageType.RELOAD_SUCCESS)
+        emitMessage(helper.messageType.RELOAD_SUCCESS, { workers: newWorkers.map(w => w.process.pid )})
       }
     })
 
     function emitMessage(type, data) {
+      if (!socket) {
+        return
+      }
       ipc.server.emit(socket, "message", { type, data })
     }
     ipc.server.on(helper.constants.RELOAD_MESSAGE, async (data, _socket) => {
