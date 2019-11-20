@@ -91,5 +91,9 @@ if (cluster.isMaster) {
     })
   })
   ipc.server.start()
+
+  process.on('exit', () => {
+    ipc.server.stop()
+  })
 }
 require(options.framework).startCluster(options)
