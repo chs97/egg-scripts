@@ -6,6 +6,19 @@ const cluster = require("cluster")
 const ipc = require("node-ipc")
 const helper = require("./helper")
 const options = JSON.parse(process.argv[2])
+
+function waitingDisconnect(worker) {
+  return new Promise((resolve, reject) => {
+    const timer = setInterval(() => {
+      if (worker.isConnected()) {
+        console.log('[Worker: %s] Waiting all socket disconnect...', worker.process.pid)
+      } else {
+        clearInterval(timer)
+        resolve()
+      }
+    }, 1000);
+  })
+}
 async function killWorkers(workers) {
   await Promise.all(
     workers.map(async worker => {
@@ -14,7 +27,7 @@ async function killWorkers(workers) {
       }
       worker.disableRefork = true
       worker.disconnect()
-      await helper.delay(5000)
+      await waitingDisconnect(worker)
       if (worker.isDead()) {
         return
       }
