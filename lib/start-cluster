@@ -1,112 +1,113 @@
 #!/usr/bin/env node
 
-"use strict"
+'use strict';
 
-const cluster = require("cluster")
-const ipc = require("node-ipc")
-const helper = require("./helper")
-const options = JSON.parse(process.argv[2])
+const cluster = require('cluster');
+const ipc = require('node-ipc');
+const helper = require('./helper');
+const options = JSON.parse(process.argv[2]);
 
 function waitingDisconnect(worker) {
-  return new Promise((resolve, reject) => {
+  return new Promise(resolve => {
     const timer = setInterval(() => {
       if (worker.isConnected()) {
-        console.log('[Worker: %s] Waiting all socket disconnect...', worker.process.pid)
+        console.log('[Worker: %s] Waiting all socket disconnect...', worker.process.pid);
       } else {
-        clearInterval(timer)
-        resolve()
+        clearInterval(timer);
+        resolve();
       }
     }, 1000);
-  })
+  });
 }
 async function killWorkers(workers) {
   await Promise.all(
     workers.map(async worker => {
       if (worker.isDead()) {
-        return
+        return;
       }
-      worker.disableRefork = true
-      worker.disconnect()
-      await waitingDisconnect(worker)
+      worker.disableRefork = true;
+      worker.disconnect();
+      await waitingDisconnect(worker);
       if (worker.isDead()) {
-        return
+        return;
       }
-      worker.kill()
+      worker.kill();
     })
-  )
+  );
 }
 
 if (cluster.isMaster) {
-  const { title } = options
-  ipc.config.id = "egg-master-ipc-process-" + title
-  ipc.config.retry = 1000
-  ipc.config.silent = true
+  const { title } = options;
+  ipc.config.id = 'egg-master-ipc-process-' + title;
+  ipc.config.retry = 1000;
+  ipc.config.silent = true;
   ipc.serve(() => {
-    let oldWorkers = []
-    let newWorkers = []
-    let hasConnects = 0
-    let forkCount = 0
-    let socket = null
-    cluster.on("fork", worker => {
-      forkCount++
-      newWorkers.push(worker)
-      emitMessage(helper.messageType.WORKER_FORK, { pid: worker.process.pid, id: worker.id })
-    })
-    cluster.on("exit", worker => {
+    let oldWorkers = [];
+    let newWorkers = [];
+    let hasConnects = 0;
+    let forkCount = 0;
+    let socket = null;
+    cluster.on('fork', worker => {
+      forkCount++;
+      newWorkers.push(worker);
+      emitMessage(helper.messageType.WORKER_FORK, { pid: worker.process.pid, id: worker.id });
+    });
+    cluster.on('exit', worker => {
       if (newWorkers.includes(worker)) {
         emitMessage(helper.messageType.WORKER_BROKEN, {
-          pid: worker.process.pid
-        })
-        killWorkers(newWorkers)
+          pid: worker.process.pid,
+        });
+        console.log('Fork count: %s, Listened count: %s', forkCount, hasConnects);
+        killWorkers(newWorkers);
       }
 
       if (newWorkers.length === 0) {
-        return
+        return;
       }
 
-      const notDeadWorker = newWorkers.find(w => !w.isDead())
+      const notDeadWorker = newWorkers.find(w => !w.isDead());
       if (!notDeadWorker) {
-        emitMessage(helper.messageType.RELOAD_FAIL)
+        emitMessage(helper.messageType.RELOAD_FAIL);
       }
-    })
-    cluster.on("listening", async worker => {
+    });
+    cluster.on('listening', async worker => {
       if (newWorkers.includes(worker)) {
-        hasConnects++
-        emitMessage(helper.messageType.WORKER_LISTENED, { pid: worker.process.pid })
+        hasConnects++;
+        emitMessage(helper.messageType.WORKER_LISTENED, { pid: worker.process.pid });
       }
       if (hasConnects === newWorkers.length) {
         // new worker has ready
-        await killWorkers(oldWorkers)
-        emitMessage(helper.messageType.RELOAD_SUCCESS, { workers: newWorkers.map(w => w.process.pid )})
+        await killWorkers(oldWorkers);
+        emitMessage(helper.messageType.RELOAD_SUCCESS, { workers: newWorkers.map(w => w.process.pid) });
       }
-    })
+    });
 
     function emitMessage(type, data) {
       if (!socket) {
-        return
+        return;
       }
-      ipc.server.emit(socket, "message", { type, data })
+      ipc.server.emit(socket, 'message', { type, data });
     }
     ipc.server.on(helper.constants.RELOAD_MESSAGE, async (data, _socket) => {
       // reset vars
-      oldWorkers = Object.entries(cluster.workers).map(([_, worker]) => worker)
-      newWorkers = []
-      hasConnects = 0
-      forkCount = 0
-      socket = _socket
-      
+      oldWorkers = Object.entries(cluster.workers).map(([ , worker ]) => worker);
+      newWorkers = [];
+      hasConnects = 0;
+      forkCount = 0;
+      socket = _socket;
+
       for (const worker of oldWorkers) {
         // const worker = oldWorkers[id]
         // cfork special prop: _clusterSettings
-        const newWorker = cluster.fork(worker._clusterSettings)
-        newWorker._clusterSettings = worker._clusterSettings
+        const newWorker = cluster.fork(worker._clusterSettings);
+        newWorker._clusterSettings = worker._clusterSettings;
       }
-    })
-  })
-  ipc.server.start()
+    });
+  });
+  ipc.server.start();
 
   process.on('exit', () => {
-    ipc.server.stop()
-  })
+    ipc.server.stop();
+  });
 }
-require(options.framework).startCluster(options)
+require(options.framework).startCluster(options);
